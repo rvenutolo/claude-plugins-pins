@@ -1,0 +1,68 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits"],
+  "timezone": "America/New_York",
+  "schedule": ["* 4-7 * * *"],
+  "nix": { "enabled": true },
+  "lockFileMaintenance": { "enabled": true },
+  "packageRules": [
+    {
+      "description": "Every update type merges unattended, majors included. GitHub auto-merge waits for the branch ruleset's required ci-ok check, which needs checks, commitlint and validate to pass.",
+      "matchUpdateTypes": [
+        "digest",
+        "pin",
+        "patch",
+        "minor",
+        "major",
+        "lockFileMaintenance"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "merge-commit"
+    },
+    {
+      "description": "A plugin pin moves only to an upstream release or commit at least 7 days old. strict holds a younger one back entirely rather than proposing it early. Scoped to the regex managers so GitHub Actions, which also resolve through github-tags, keep their own cadence.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-tags", "github-digest"],
+      "minimumReleaseAge": "7 days",
+      "internalChecksFilter": "strict"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "A tag-pinned plugin: one manager owns both the manifest pin (ref and sha) and the README table row, so a single branch carries both edits and the README sync check never sees them split across PRs.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.claude-plugin/marketplace\\.json$/",
+        "/^README\\.md$/"
+      ],
+      "datasourceTemplate": "github-tags",
+      "matchStrings": [
+        "\"repo\": \"(?<depName>[^\"]+)\",\\s*\"ref\": \"(?<currentValue>v[^\"]+)\",\\s*\"sha\": \"(?<currentDigest>[0-9a-f]{40})\"",
+        "\\]\\(https://github\\.com/(?<depName>[^)]+)\\) \\| (?<currentValue>v[^ |]+) \\|"
+      ]
+    },
+    {
+      "description": "A branch-pinned plugin follows the head of main. Same pairing as the tag manager: the manifest sha and the README row move in one branch. The README holds the full sha because Renovate writes a new digest at full length.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.claude-plugin/marketplace\\.json$/",
+        "/^README\\.md$/"
+      ],
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "main",
+      "matchStrings": [
+        "\"repo\": \"(?<depName>[^\"]+)\",\\s*\"ref\": \"main\",\\s*\"sha\": \"(?<currentDigest>[0-9a-f]{40})\"",
+        "\\]\\(https://github\\.com/(?<depName>[^)]+)\\) \\| (?<currentDigest>[0-9a-f]{40}) \\|"
+      ]
+    },
+    {
+      "description": "Pins the Claude Code CLI version that CI installs, from the renovate comment above CLAUDE_CODE_VERSION.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>.+?) depName=(?<depName>.+?)\\s+CLAUDE_CODE_VERSION:\\s*'(?<currentValue>[^']+)'"
+      ]
+    }
+  ]
+}
