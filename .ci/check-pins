@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+
+# @description Verify every plugin entry in the marketplace manifest is pinned
+#              to a reviewed upstream commit. Each entry's upstream plugin name
+#              and tracking kind come from .ci/upstream-plugins.json, a map of
+#              entry name to {"plugin": <name>, "track": "tag" | "branch"}; the
+#              map and the manifest must name the same entries.
+#
+#              For every entry: the source is an object with `source` "github"
+#              and non-empty `repo`, `ref` and `sha`; `ref` exists on the remote
+#              as the kind `track` declares and not as the other kind; and the
+#              plugin.json at `sha` names the map's `plugin`.
+#
+#              A `tag` entry's tag resolves to the pinned `sha` (the peeled
+#              commit for an annotated tag, never the tag object), and the
+#              plugin.json at that sha carries the version the tag spells.
+#
+#              A `branch` entry tracks `main`, the only branch the Renovate
+#              digest manager follows, and its `sha` is a commit reachable from
+#              it.
+#              Reachability is what matters: raw.githubusercontent.com serves
+#              any commit in a repository's fork network, so a sha that merely
+#              exists could come from anyone's fork. It is answered from a
+#              treeless single-branch clone, removed on exit.
+#
+#              CHECK_PINS_REMOTE_BASE (default https://github.com) and
+#              CHECK_PINS_RAW_BASE (default https://raw.githubusercontent.com)
+#              replace the two hosts, so tests can serve fixtures from disk.
+# @arg $1 root optional repository root holding .claude-plugin/marketplace.json
+#         and .ci/upstream-plugins.json; defaults to the repository root of the
+#         working directory
+# @stderr one FAIL line per violation naming the entry and the values that
+#         disagree, an OK line per verified entry, the usage line on exit 2;
+#         the ERR trap's `[<script>] ERROR: ...` report when a command fails
+#         instead
+# @exitcode 0 every entry is pinned correctly
+# @exitcode 1 at least one violation, an unreadable manifest or map, or an
+#             unreachable remote
+# @exitcode 2 more than one argument
+# @exitcode * otherwise the failing git status, when the repository root cannot
+#             be resolved
+
+set -Eeuo pipefail
+shopt -s inherit_errexit
+IFS=$'\n\t'
+
+trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+readonly REMOTE_BASE="${CHECK_PINS_REMOTE_BASE:-https://github.com}"
+readonly RAW_BASE="${CHECK_PINS_RAW_BASE:-https://raw.githubusercontent.com}"
+
+WORK_DIR=''
+
+# @description Print the usage line and exit 2. Exit 2 rather than 1: 1 is the
+#              check's verdict, and "you called it wrong" must stay
+#              distinguishable from it.
+# @noargs
+# @stderr the usage line
+# @exitcode 2 always
+function usage() {
+  printf 'usage: %s [root]\n' "${0##*/}" >&2
+  trap - ERR
+  exit 2
+}
+
+# @description Print one FAIL line.
+# @arg $1 entry the plugin entry name
+# @arg $2 message what is wrong, naming the values that disagree
+# @stderr the FAIL line
+function fail() {
+  printf 'FAIL: %s: %s\n' "$1" "$2" >&2
+}
+
+# @description Run git with user and system config ignored. The remote is read
+#              anonymously over the URL as given: a `url.<base>.insteadOf`
+#              rewrite of https://github.com/ to SSH makes the read fail
+#              wherever ssh is not on PATH, such as inside the hermetic
+#              devShell.
+# @arg $@ args the git arguments
+function plain_git() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git "$@"
+}
+
+# @description Remove the clone directory, if one was made.
+# @noargs
+function cleanup() {
+  if [[ -n "${WORK_DIR}" ]]; then
+    rm --recursive --force -- "${WORK_DIR}"
+  fi
+}
+
+# @description Read one string field of one manifest entry; empty when the
+#              field is absent or not a string.
+# @arg $1 manifest path of marketplace.json
+# @arg $2 index the entry's position in .plugins
+# @arg $3 path a jq path expression relative to the entry, such as .source.ref
+# @stdout the field's value, or nothing
+function entry_field() {
+  jq --raw-output --argjson index "$2" "(.plugins[\$index] | try ($3 | strings) catch \"\") // \"\"" "$1"
+}
+
+# @description Read one string field of one map row; empty when the row or the
+#              field is absent or not a string.
+# @arg $1 map path of upstream-plugins.json
+# @arg $2 name the entry name
+# @arg $3 field the row's field, `plugin` or `track`
+# @stdout the field's value, or nothing
+function map_field() {
+  jq --raw-output --arg name "$2" --arg field "$3" '(.[$name] | objects | .[$field] | strings) // ""' "$1"
+}
+
+# @description Verify a branch entry's sha is a commit reachable from the
+#              branch, from a treeless single-branch bare clone.
+# @arg $1 label the entry name, for FAIL lines
+# @arg $2 repo the owner/name repository
+# @arg $3 ref the branch
+# @arg $4 sha the pinned sha
+# @stderr a FAIL line on a violation
+# @exitcode 0 the sha is on the branch
+# @exitcode 1 otherwise
+function check_branch_reachable() {
+  local -r label="$1" repo="$2" ref="$3" sha="$4"
+  local -r clone="${WORK_DIR}/${label}.git"
+  if ! plain_git clone --quiet --bare --filter=tree:0 --single-branch --branch "${ref}" \
+    "${REMOTE_BASE}/${repo}" "${clone}" 2> /dev/null; then
+    fail "${label}" "cannot clone branch ${ref} of ${repo}"
+    return 1
+  fi
+  if ! plain_git -C "${clone}" cat-file -e "${sha}^{commit}" 2> /dev/null; then
+    fail "${label}" "commit ${sha} is not reachable from ${ref} in ${repo}"
+    return 1
+  fi
+  if ! plain_git -C "${clone}" merge-base --is-ancestor "${sha}" "refs/heads/${ref}" 2> /dev/null; then
+    fail "${label}" "commit ${sha} is not reachable from ${ref} in ${repo}"
+    return 1
+  fi
+}
+
+# @description Check one manifest entry.
+# @arg $1 manifest path of marketplace.json
+# @arg $2 map path of upstream-plugins.json
+# @arg $3 index the entry's position in .plugins
+# @stderr FAIL lines for violations, an OK line otherwise
+# @exitcode 0 the entry is pinned correctly
+# @exitcode 1 at least one violation
+function check_entry() {
+  local -r manifest="$1" map="$2" index="$3"
+  local name kind repo ref sha plugin track
+  name="$(entry_field "${manifest}" "${index}" '.name')"
+  kind="$(entry_field "${manifest}" "${index}" '.source.source')"
+  repo="$(entry_field "${manifest}" "${index}" '.source.repo')"
+  ref="$(entry_field "${manifest}" "${index}" '.source.ref')"
+  sha="$(entry_field "${manifest}" "${index}" '.source.sha')"
+  local -r label="${name:-#${index}}"
+
+  if [[ -z "${kind}" || -z "${repo}" || -z "${ref}" || -z "${sha}" ]]; then
+    fail "${label}" "source must be an object with source, repo, ref and sha (got source=${kind:-<missing>} repo=${repo:-<missing>} ref=${ref:-<missing>} sha=${sha:-<missing>})"
+    return 1
+  fi
+  if [[ "${kind}" != 'github' ]]; then
+    fail "${label}" "source.source must be github (got ${kind})"
+    return 1
+  fi
+
+  plugin="$(map_field "${map}" "${name}" 'plugin')"
+  track="$(map_field "${map}" "${name}" 'track')"
+  if [[ -z "${plugin}" || -z "${track}" ]]; then
+    fail "${label}" "needs a row in .ci/upstream-plugins.json with plugin and track (got plugin=${plugin:-<missing>} track=${track:-<missing>})"
+    return 1
+  fi
+  if [[ "${track}" != 'tag' && "${track}" != 'branch' ]]; then
+    fail "${label}" "track in .ci/upstream-plugins.json must be tag or branch (got ${track})"
+    return 1
+  fi
+  # Renovate's digest manager matches only `"ref": "main"`. A branch entry on
+  # any other branch would pass every check and never be bumped.
+  if [[ "${track}" == 'branch' && "${ref}" != 'main' ]]; then
+    fail "${label}" "a branch entry must track main, the branch Renovate's digest manager follows (got ${ref})"
+    return 1
+  fi
+
+  local listing
+  if ! listing="$(plain_git ls-remote "${REMOTE_BASE}/${repo}" \
+    "refs/tags/${ref}" "refs/tags/${ref}^{}" "refs/heads/${ref}" 2> /dev/null)"; then
+    fail "${label}" "cannot reach ${repo}"
+    return 1
+  fi
+  # The peeled line is the commit an annotated tag points at; a lightweight tag
+  # has only the plain line, which already is the commit.
+  local peeled='' plain='' head='' line_sha line_ref
+  while read -r line_sha line_ref; do
+    case "${line_ref}" in
+      "refs/tags/${ref}^{}") peeled="${line_sha}" ;;
+      "refs/tags/${ref}") plain="${line_sha}" ;;
+      "refs/heads/${ref}") head="${line_sha}" ;;
+    esac
+  done <<< "${listing}"
+  local -r tagged="${peeled:-${plain}}"
+  # A name that is both would let the remote, not this manifest, decide which
+  # one Claude Code checks out.
+  if [[ -n "${tagged}" && -n "${head}" ]]; then
+    fail "${label}" "ref ${ref} is both a tag and a branch in ${repo}"
+    return 1
+  fi
+
+  if [[ "${track}" == 'tag' ]]; then
+    if [[ -z "${tagged}" ]]; then
+      if [[ -n "${head}" ]]; then
+        fail "${label}" "ref ${ref} is a branch, not a tag, in ${repo}"
+      else
+        fail "${label}" "tag ${ref} does not exist in ${repo}"
+      fi
+      return 1
+    fi
+    if [[ "${tagged}" != "${sha}" ]]; then
+      fail "${label}" "sha ${sha} is not the commit tag ${ref} resolves to (${tagged})"
+      return 1
+    fi
+  else
+    if [[ -z "${head}" ]]; then
+      if [[ -n "${tagged}" ]]; then
+        fail "${label}" "ref ${ref} is a tag, not a branch, in ${repo}"
+      else
+        fail "${label}" "branch ${ref} does not exist in ${repo}"
+      fi
+      return 1
+    fi
+    check_branch_reachable "${label}" "${repo}" "${ref}" "${sha}" || return 1
+  fi
+
+  local plugin_json plugin_name plugin_version plugin_type rc=0
+  if ! plugin_json="$(curl --fail --silent --show-error --location \
+    "${RAW_BASE}/${repo}/${sha}/.claude-plugin/plugin.json" 2> /dev/null)"; then
+    fail "${label}" "cannot fetch .claude-plugin/plugin.json at ${sha} from ${repo}"
+    return 1
+  fi
+  if ! plugin_type="$(jq --raw-output 'type' <<< "${plugin_json}" 2> /dev/null)"; then
+    fail "${label}" ".claude-plugin/plugin.json at ${sha} in ${repo} is not valid JSON"
+    return 1
+  fi
+  if [[ "${plugin_type}" != 'object' ]]; then
+    fail "${label}" ".claude-plugin/plugin.json at ${sha} in ${repo} is not a JSON object"
+    return 1
+  fi
+  plugin_name="$(jq --raw-output '.name // ""' <<< "${plugin_json}")"
+  plugin_version="$(jq --raw-output '.version // ""' <<< "${plugin_json}")"
+  if [[ "${plugin_name}" != "${plugin}" ]]; then
+    fail "${label}" "plugin.json name ${plugin_name:-<missing>} differs from the upstream name ${plugin} in .ci/upstream-plugins.json"
+    rc=1
+  fi
+  if [[ "${track}" == 'tag' && "v${plugin_version}" != "${ref}" ]]; then
+    fail "${label}" "plugin.json version ${plugin_version:-<missing>} does not match ref ${ref}"
+    rc=1
+  fi
+  if ((rc == 0)); then
+    printf 'OK: %s: %s pinned to %s %s at %s\n' "${label}" "${repo}" "${track}" "${ref}" "${sha}" >&2
+  fi
+  return "${rc}"
+}
+
+function main() {
+  if (($# > 1)); then
+    usage
+  fi
+  local root
+  root="${1:-$(git rev-parse --show-toplevel)}"
+  local -r manifest="${root}/.claude-plugin/marketplace.json"
+  local -r map="${root}/.ci/upstream-plugins.json"
+
+  local count
+  if ! count="$(jq --raw-output '.plugins | length' "${manifest}" 2> /dev/null)"; then
+    printf 'FAIL: cannot read a plugins array from %s\n' "${manifest}" >&2
+    trap - ERR
+    return 1
+  fi
+  if ! jq --exit-status 'type == "object"' "${map}" &> /dev/null; then
+    printf 'FAIL: cannot read a JSON object from %s\n' "${map}" >&2
+    trap - ERR
+    return 1
+  fi
+
+  trap cleanup EXIT
+  WORK_DIR="$(mktemp --directory)"
+
+  local rc=0 index orphans orphan
+  for ((index = 0; index < count; index++)); do
+    check_entry "${manifest}" "${map}" "${index}" || rc=1
+  done
+  # Assigned, not read through a process substitution: inside `< <(...)` a jq
+  # that failed would report nothing and the orphan check would pass vacuously.
+  orphans="$(jq --raw-output --slurpfile manifest "${manifest}" \
+    'keys[] as $name | select([$manifest[0].plugins[].name] | index($name) | not) | $name' "${map}")"
+  if [[ -n "${orphans}" ]]; then
+    while IFS= read -r orphan; do
+      fail "${orphan}" ".ci/upstream-plugins.json has a row with no manifest entry"
+      rc=1
+    done <<< "${orphans}"
+  fi
+  # A check reporting its own verdict is not a crash: drop the ERR trap so the
+  # diagnostics above are the last thing the reader sees.
+  trap - ERR
+  return "${rc}"
+}
+
+main "$@"

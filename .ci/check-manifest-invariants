@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+
+# @description Assert the marketplace manifest satisfies the invariants the
+#              official community marketplace checks, from
+#              claude-plugins-community/.github/actions/validate-plugins/scripts/11-validate-invariants.sh,
+#              plus the manifest's required top-level fields and `$schema`.
+#              `claude plugin validate` is a schema check and waves every one
+#              of these through, so this script is what stands between a
+#              careless edit and a marketplace rejection.
+#
+#              Applied to every plugins[] entry:
+#                I1  names are in ascending order, compared case-insensitively
+#                I2  names are unique
+#                I3  descriptions are 10-2000 characters with no leading or
+#                    trailing whitespace
+#                I4  owner.url, homepage and author.url are https URLs
+#                I5  the source is an object whose `sha` is 40 lowercase hex
+#                    characters, and whose `ref` is non-empty
+#                I9  the source `repo` is `owner/name` over [A-Za-z0-9._-] with
+#                    no `..`; upstream applies I9 to URL and path fields, and
+#                    the github source's `repo` is the only such field here
+#                I10 names and descriptions hold no zero-width or bidi control
+#                    codepoints
+#                I11 names match ^[a-z0-9][a-z0-9-]{1,63}$
+#
+#              I6 and I7 are per-file-mode layout rules (entry filename equals
+#              name; the assembled manifest is not edited directly) and do not
+#              apply to a single hand-edited manifest. I8 constrains local path
+#              sources, and this marketplace has none, so a string source is
+#              reported as a violation instead. Upstream only warns on some of
+#              these by default; this port hard-fails every one.
+#
+#              Beyond upstream: `$schema` must be the schemastore URL, and the
+#              marketplace needs a valid `name`, `owner.name` and a non-empty
+#              `plugins` array.
+#
+#              All rules run in one jq program: the character-class checks
+#              cannot be done portably in shell: a contributor may run the gate
+#              on macOS, where `grep -P` is not guaranteed.
+# @arg $1 root optional repository root holding .claude-plugin/marketplace.json;
+#         defaults to the repository root of the working directory
+# @stderr one `FAIL: <message>` line per violated invariant or unreadable
+#         manifest, an `OK:` line when every invariant holds, the usage line on
+#         exit 2; the ERR trap's `[<script>] ERROR: ...` report when a command
+#         fails instead
+# @exitcode 0 every invariant holds
+# @exitcode 1 at least one violation, or an unreadable or unparsable manifest
+# @exitcode 2 more than one argument
+# @exitcode * otherwise the failing git status, when the repository root cannot
+#             be resolved
+
+set -Eeuo pipefail
+shopt -s inherit_errexit
+IFS=$'\n\t'
+
+trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+readonly SCHEMA_URL='https://json.schemastore.org/claude-code-marketplace.json'
+
+# One jq program, emitting one line per violation. Single-quoted, so it must
+# contain no apostrophes -- including in its message strings.
+#
+# hidden_chars lists codepoints by decimal value: 8203-8207 are ZWSP/ZWNJ/ZWJ
+# plus the LTR/RTL marks, 65279 is the BOM, 8234-8238 are the bidi
+# embedding/override controls, and 8294-8297 are the bidi isolates. All of them
+# render as nothing and can make two different names look identical.
+# shellcheck disable=SC2016 # every `$` below is jq source, not a shell expansion
+readonly JQ_PROGRAM='
+def hidden_chars:
+  explode | any(
+    (. >= 8203 and . <= 8207) or . == 65279
+    or (. >= 8234 and . <= 8238)
+    or (. >= 8294 and . <= 8297));
+
+def check_name($label):
+  if type != "string" then "I11: \($label) name is missing or not a string"
+  else
+    ( if (test("^[a-z0-9][a-z0-9-]{1,63}$") | not)
+      then "I11: \($label) name is not ^[a-z0-9][a-z0-9-]{1,63}$: \(.)"
+      else empty end ),
+    ( if hidden_chars
+      then "I10: \($label) name contains a hidden Unicode codepoint"
+      else empty end )
+  end;
+
+def check_description($label):
+  if type != "string" then "I3: \($label) description is missing or not a string"
+  else
+    ( if (length < 10 or length > 2000)
+      then "I3: \($label) description is \(length) characters; must be 10-2000"
+      else empty end ),
+    ( if (test("^\\s") or test("\\s$"))
+      then "I3: \($label) description has leading or trailing whitespace"
+      else empty end ),
+    ( if hidden_chars
+      then "I10: \($label) description contains a hidden Unicode codepoint"
+      else empty end )
+  end;
+
+def check_url($label):
+  select(. != null)
+  | if type != "string" or (startswith("https://") | not)
+    then "I4: \($label) is not an https URL: \(.)"
+    else empty end;
+
+def check_source($label):
+  if type != "object"
+  then "source: \($label) source must be an object with source, repo, ref and sha"
+  else
+    ( .sha as $sha
+      | if ($sha | type) != "string" or ($sha | test("^[0-9a-f]{40}$") | not)
+        then "I5: \($label) source.sha is missing or not 40 lowercase hex characters"
+        else empty end ),
+    ( .ref as $ref
+      | if ($ref | type) != "string" or $ref == ""
+        then "ref: \($label) source.ref is missing or empty"
+        else empty end ),
+    ( .repo as $repo
+      | if ($repo | type) != "string"
+          or ($repo | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$") | not)
+          or ($repo | contains(".."))
+        then "I9: \($label) source.repo is not owner/name over [A-Za-z0-9._-] without ..: \($repo)"
+        else empty end )
+  end;
+
+( if .["$schema"] != $schema
+  then "schema: $schema must be \($schema)"
+  else empty end ),
+( .name | check_name("marketplace") ),
+( if (.owner.name | type) != "string" or .owner.name == ""
+  then "owner.name: owner.name is missing or empty"
+  else empty end ),
+( .owner.url | check_url("owner.url") ),
+( if (.plugins | type) != "array" or (.plugins | length) == 0
+  then "plugins: plugins must be a non-empty array"
+  else
+    ( [.plugins[].name | strings | ascii_downcase] as $names
+      | ( if $names != ($names | sort)
+          then "I1: plugins[] is not in ascending name order: \($names | join(", "))"
+          else empty end ),
+        ( if ($names | length) != ($names | unique | length)
+          then "I2: plugins[] has duplicate names: \($names | join(", "))"
+          else empty end ) ),
+    ( .plugins | to_entries[]
+      | .key as $i
+      | .value
+      | "plugins[\($i)]" as $label
+      | ( .name | check_name($label) ),
+        ( .description | check_description($label) ),
+        ( .source | check_source($label) ),
+        ( .homepage | check_url("\($label).homepage") ),
+        ( .author.url | check_url("\($label).author.url") ) )
+  end )
+'
+
+# @description Print the usage line and exit 2. Exit 2 rather than 1: 1 is the
+#              check's verdict, and "you called it wrong" must stay
+#              distinguishable from it.
+# @noargs
+# @stderr the usage line
+# @exitcode 2 always
+function usage() {
+  printf 'usage: %s [root]\n' "${0##*/}" >&2
+  trap - ERR
+  exit 2
+}
+
+# @description Print one violation to stderr, in the house format.
+# @arg $1 message the violation text
+# @stderr the `FAIL: <message>` line
+function fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+}
+
+function main() {
+  if (($# > 1)); then
+    usage
+  fi
+  local root
+  root="${1:-$(git rev-parse --show-toplevel)}"
+  local -r manifest="${root}/.claude-plugin/marketplace.json"
+
+  if [[ ! -f "${manifest}" ]]; then
+    fail "${manifest} does not exist (marketplace.json)"
+    trap - ERR
+    return 1
+  fi
+  if ! jq --exit-status 'type == "object"' "${manifest}" &> /dev/null; then
+    fail "${manifest} is not a parseable JSON object (marketplace.json)"
+    trap - ERR
+    return 1
+  fi
+
+  # Assigned, not read through a process substitution: inside `< <(...)` a jq
+  # that died on its own program would report nothing and this script would
+  # exit 0 for the wrong reason. Assignment keeps the exit status reachable.
+  local output=''
+  if ! output="$(jq --raw-output --arg schema "${SCHEMA_URL}" "${JQ_PROGRAM}" "${manifest}")"; then
+    fail 'the invariant program itself failed to run'
+    trap - ERR
+    return 1
+  fi
+
+  local rc=0 violation
+  if [[ -n "${output}" ]]; then
+    while IFS= read -r violation; do
+      fail "${violation}"
+      rc=1
+    done <<< "${output}"
+  fi
+  if ((rc == 0)); then
+    printf 'OK: marketplace.json satisfies I1-I5, I9-I11 and the required fields\n' >&2
+  fi
+  # A check reporting its own verdict is not a crash: drop the ERR trap so the
+  # diagnostics above are the last thing the reader sees.
+  trap - ERR
+  return "${rc}"
+}
+
+main "$@"

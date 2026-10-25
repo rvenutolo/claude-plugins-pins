@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+# @description Validate the marketplace manifest with the Claude Code CLI. This
+#              is the opt-in local half of the `validate` CI job; CI is what
+#              actually enforces the check, on a PINNED CLI version.
+#
+#              Deliberately NOT wired into run-all-checks. That gate is
+#              hermetic -- every tool in it comes from the flake -- and a step
+#              whose behaviour depends on what happens to be on the ambient PATH
+#              would make it non-deterministic. A contributor without the CLI
+#              installed must not be blocked, so a missing `claude` exits 0 with
+#              an explanation rather than failing.
+#
+#              The manifest file is named explicitly, so the command is the same
+#              one the CI job runs.
+# @noargs
+# @stderr a `[<script>] <message>` banner before the manifest, the `SKIP:`
+#         advisory when the CLI is not installed, and the upgrade hint when the
+#         host bash is older than 4.4; the ERR trap's `[<script>] ERROR: ...`
+#         report when a command fails instead
+# @exitcode 0 the manifest validates, or the CLI is not installed
+# @exitcode 1 the manifest failed validation, or the host bash is older than
+#             4.4
+# @exitcode * otherwise the failing git status, when the repository root cannot
+#             be resolved
+
+set -Eeuo pipefail
+# This script runs under the HOST bash -- the `claude` CLI lives on the ambient
+# PATH, not in the devShell -- so the version is whatever the machine ships.
+# `shopt -s inherit_errexit` below is a bash 4.4 builtin option:
+# on stock macOS bash 3.2, and on 4.2 or 4.3, the shell aborts with
+# `shopt: inherit_errexit: invalid shell option name`, which says nothing about
+# what to install. Check first, and say what to do. Must stay ABOVE the `shopt`
+# line it is protecting.
+if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4))); then
+  printf '%s: bash 4.4+ required to validate the manifest (found %s.%s). On macOS: brew install bash.\n' \
+    "${0##*/}" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" >&2
+  exit 1
+fi
+shopt -s inherit_errexit
+IFS=$'\n\t'
+
+trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+readonly REPO_DIR
+
+# @description Log a step banner to stderr, in the house format.
+# @arg $1 message the text to log
+# @stderr the `[<script>] <message>` line
+function log() {
+  local -r message="$1"
+  printf '[%s] %s\n' "${0##*/}" "${message}" >&2
+}
+
+function main() {
+  if ! command -v claude > /dev/null 2>&1; then
+    printf 'SKIP: claude is not on PATH; the manifest is not validated\n' >&2
+    printf '      the validate job in .github/workflows/ci.yml enforces this on every PR.\n' >&2
+    return 0
+  fi
+
+  local rc=0
+  local -r manifest='.claude-plugin/marketplace.json'
+  log "validating ${manifest}"
+  claude plugin validate --strict "${REPO_DIR}/${manifest}" || rc=1
+  # A gate reporting its own verdict is not a crash: drop the ERR trap so the
+  # diagnostics above are the last thing the reader sees.
+  trap - ERR
+  return "${rc}"
+}
+
+main "$@"

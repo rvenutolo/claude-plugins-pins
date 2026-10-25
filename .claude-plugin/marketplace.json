@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "rvenutolo-pins",
+  "owner": {
+    "name": "Rick Venutolo",
+    "url": "https://github.com/rvenutolo"
+  },
+  "metadata": {
+    "description": "Third-party Claude Code plugins pinned to reviewed commits, for Rick Venutolo's own use"
+  },
+  "plugins": [
+    {
+      "name": "forrestchang--andrej-karpathy-skills",
+      "source": {
+        "source": "github",
+        "repo": "forrestchang/andrej-karpathy-skills",
+        "ref": "main",
+        "sha": "2c606141936f1eeef17fa3043a72095b4765b9c2"
+      },
+      "description": "Behavioral guidelines to reduce common LLM coding mistakes, derived from Andrej Karpathy's observations on LLM coding pitfalls.",
+      "category": "workflow",
+      "homepage": "https://github.com/forrestchang/andrej-karpathy-skills",
+      "author": {
+        "name": "forrestchang",
+        "url": "https://github.com/forrestchang"
+      },
+      "keywords": ["guidelines", "best-practices", "coding", "karpathy"]
+    },
+    {
+      "name": "jarrodwatts--hud",
+      "source": {
+        "source": "github",
+        "repo": "jarrodwatts/claude-hud",
+        "ref": "v0.11.3",
+        "sha": "5621429b84ea2503185221244c43a06797bfd05e"
+      },
+      "description": "Real-time statusline showing context usage, active tools, running agents, and todo progress.",
+      "category": "monitoring",
+      "homepage": "https://github.com/jarrodwatts/claude-hud",
+      "author": {
+        "name": "Jarrod Watts",
+        "url": "https://github.com/jarrodwatts"
+      },
+      "keywords": [
+        "hud",
+        "statusline",
+        "monitoring",
+        "context",
+        "agents",
+        "todos"
+      ]
+    }
+  ]
+}
