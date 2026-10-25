@@ -263,7 +263,7 @@ JSON
   run --separate-stderr "${CHECK}" "${ROOT}"
   assert_failure 1
   [[ "${stderr}" == *'FAIL: widget:'* ]]
-  [[ "${stderr}" == *"${missing}"* ]]
+  [[ "${stderr}" == *"commit ${missing} does not exist in acme/widget"* ]]
   [[ "${stderr}" != *'ERROR:'* ]]
 }
 
@@ -390,4 +390,17 @@ JSON
   run --separate-stderr "${CHECK}" "${ROOT}"
   assert_failure 1
   [[ "${stderr}" == *'FAIL: widget:'*'main'*'other'* ]]
+}
+
+@test "pins: reports a failed clone as FAIL not a crash" {
+  # main points at an object the remote does not have, so ls-remote lists the
+  # branch but cloning it fails: the failure lands in the clone step itself.
+  printf '%s\n' '0123456789abcdef0123456789abcdef01234567' > "${REMOTE}/.git/refs/heads/main"
+  run git ls-remote "file://${BATS_TEST_TMPDIR}/remote/acme/widget" refs/heads/main
+  assert_success
+  write_manifest main "${SHA_LIGHT}" branch
+  run --separate-stderr "${CHECK}" "${ROOT}"
+  assert_failure 1
+  [[ "${stderr}" == *'FAIL: widget: cannot clone branch main of acme/widget'* ]]
+  [[ "${stderr}" != *'ERROR:'* ]]
 }
