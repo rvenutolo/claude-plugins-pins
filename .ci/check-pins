@@ -15,7 +15,9 @@
 #              commit for an annotated tag, never the tag object), and the
 #              plugin.json at that sha carries the version the tag spells.
 #
-#              A `branch` entry's `sha` is a commit reachable from that branch.
+#              A `branch` entry tracks `main`, the only branch the Renovate
+#              digest manager follows, and its `sha` is a commit reachable from
+#              it.
 #              Reachability is what matters: raw.githubusercontent.com serves
 #              any commit in a repository's fork network, so a sha that merely
 #              exists could come from anyone's fork. It is answered from a
@@ -168,6 +170,12 @@ function check_entry() {
   fi
   if [[ "${track}" != 'tag' && "${track}" != 'branch' ]]; then
     fail "${label}" "track in .ci/upstream-plugins.json must be tag or branch (got ${track})"
+    return 1
+  fi
+  # Renovate's digest manager matches only `"ref": "main"`. A branch entry on
+  # any other branch would pass every check and never be bumped.
+  if [[ "${track}" == 'branch' && "${ref}" != 'main' ]]; then
+    fail "${label}" "a branch entry must track main, the branch Renovate's digest manager follows (got ${ref})"
     return 1
   fi
 
