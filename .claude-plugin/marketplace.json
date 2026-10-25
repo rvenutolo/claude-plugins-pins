@@ -41,7 +41,14 @@
         "name": "Jarrod Watts",
         "url": "https://github.com/jarrodwatts"
       },
-      "keywords": ["hud", "statusline", "monitoring", "context", "agents", "todos"]
+      "keywords": [
+        "hud",
+        "statusline",
+        "monitoring",
+        "context",
+        "agents",
+        "todos"
+      ]
     }
   ]
 }

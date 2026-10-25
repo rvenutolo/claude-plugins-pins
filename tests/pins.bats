@@ -218,10 +218,9 @@ JSON
 @test "pins: ignores url rewrites in the user's git config for a branch entry" {
   printf '[url "file:///nonexistent/"]\n\tinsteadOf = %s/\n' "file://${BATS_TEST_TMPDIR}/remote" \
     > "${BATS_TEST_TMPDIR}/gitconfig"
-  export GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR}/gitconfig"
   serve_plugin_json "${SHA_LIGHT}" upstream-widget 1.0.0
   write_manifest main "${SHA_LIGHT}" branch
-  run --separate-stderr "${CHECK}" "${ROOT}"
+  run --separate-stderr env GIT_CONFIG_GLOBAL="${BATS_TEST_TMPDIR}/gitconfig" "${CHECK}" "${ROOT}"
   assert_success
 }
 
@@ -361,21 +360,20 @@ JSON
 }
 
 @test "pins: reports unreachable remote for a branch entry as FAIL not a crash" {
-  export CHECK_PINS_REMOTE_BASE="file://${BATS_TEST_TMPDIR}/does-not-exist"
   write_manifest main "${SHA_LIGHT}" branch
-  run --separate-stderr "${CHECK}" "${ROOT}"
+  run --separate-stderr env CHECK_PINS_REMOTE_BASE="file://${BATS_TEST_TMPDIR}/does-not-exist" "${CHECK}" "${ROOT}"
   assert_failure 1
   [[ "${stderr}" == *'FAIL: widget: cannot reach acme/widget'* ]]
   [[ "${stderr}" != *'ERROR:'* ]]
 }
 
 @test "pins: leaves no clone behind in TMPDIR" {
-  export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
-  mkdir --parents "${TMPDIR}"
+  local -r tmp="${BATS_TEST_TMPDIR}/tmp"
+  mkdir --parents "${tmp}"
   serve_plugin_json "${SHA_LIGHT}" upstream-widget 1.0.0
   write_manifest main "${SHA_LIGHT}" branch
-  run --separate-stderr "${CHECK}" "${ROOT}"
+  run --separate-stderr env TMPDIR="${tmp}" "${CHECK}" "${ROOT}"
   assert_success
-  run find "${TMPDIR}" -mindepth 1
+  run find "${tmp}" -mindepth 1
   assert_output ''
 }
