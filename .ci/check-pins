@@ -17,11 +17,12 @@
 #
 #              A `branch` entry tracks `main`, the only branch the Renovate
 #              digest manager follows, and its `sha` is a commit reachable from
-#              it.
-#              Reachability is what matters: raw.githubusercontent.com serves
-#              any commit in a repository's fork network, so a sha that merely
-#              exists could come from anyone's fork. It is answered from a
-#              treeless single-branch clone, removed on exit.
+#              it. Reachability is what matters: raw.githubusercontent.com
+#              serves any commit in a repository's fork network, so a sha that
+#              merely exists could come from anyone's fork. The branch is cloned
+#              treeless into a directory removed on exit, and
+#              `git merge-base --is-ancestor` against the cloned branch head is
+#              what decides.
 #
 #              CHECK_PINS_REMOTE_BASE (default https://github.com) and
 #              CHECK_PINS_RAW_BASE (default https://raw.githubusercontent.com)
@@ -110,7 +111,11 @@ function map_field() {
 }
 
 # @description Verify a branch entry's sha is a commit reachable from the
-#              branch, from a treeless single-branch bare clone.
+#              branch, from a treeless single-branch bare clone. The clone is
+#              partial, so `cat-file -e` lazily fetches any sha the remote can
+#              serve, off-branch ones included: it only tells a sha that exists
+#              nowhere from one that exists. `merge-base --is-ancestor` is the
+#              reachability verdict.
 # @arg $1 label the entry name, for FAIL lines
 # @arg $2 repo the owner/name repository
 # @arg $3 ref the branch
@@ -127,7 +132,7 @@ function check_branch_reachable() {
     return 1
   fi
   if ! plain_git -C "${clone}" cat-file -e "${sha}^{commit}" 2> /dev/null; then
-    fail "${label}" "commit ${sha} is not reachable from ${ref} in ${repo}"
+    fail "${label}" "commit ${sha} does not exist in ${repo}"
     return 1
   fi
   if ! plain_git -C "${clone}" merge-base --is-ancestor "${sha}" "refs/heads/${ref}" 2> /dev/null; then
