@@ -43,7 +43,7 @@
       ]
     },
     {
-      "description": "A branch-pinned plugin follows the head of main. Same pairing as the tag manager: the manifest sha and the README row move in one branch. The README holds the full sha because Renovate writes a new digest at full length.",
+      "description": "A branch-pinned plugin follows the head of main. Same pairing as the tag manager: the manifest sha and the README row move in one branch. The README cell holds the full sha because this manager captures it as a 40-hex currentDigest, which Renovate replaces with the full new digest.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^\\.claude-plugin/marketplace\\.json$/",

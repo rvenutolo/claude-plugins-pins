@@ -11,7 +11,8 @@
 #              <version> is the entry's `ref` when .ci/upstream-plugins.json
 #              gives it track `tag`, and its full 40-hex `sha` when the track is
 #              `branch`: a branch name says nothing about what is pinned, and
-#              Renovate rewrites a digest only at full length.
+#              Renovate's digest manager captures the cell as a 40-hex
+#              `currentDigest`, which it replaces with the full new digest.
 # @arg $1 root optional repository root holding README.md,
 #         .claude-plugin/marketplace.json and .ci/upstream-plugins.json;
 #         defaults to the repository root of the working directory
