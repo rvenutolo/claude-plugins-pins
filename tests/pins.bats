@@ -293,15 +293,21 @@ JSON
   [[ "${stderr}" == *'v1.0.0'* ]]
 }
 
-@test "pins: fails when ref is both a tag and a branch" {
+@test "pins: fails when a tag entry's ref is both a tag and a branch" {
   serve_plugin_json "${SHA_ANNOTATED}" upstream-widget 1.0.0
-  local track
-  for track in tag branch; do
-    write_manifest dup "${SHA_ANNOTATED}" "${track}"
-    run --separate-stderr "${CHECK}" "${ROOT}"
-    assert_failure 1
-    [[ "${stderr}" == *'FAIL: widget:'*'both a tag and a branch'* ]]
-  done
+  write_manifest dup "${SHA_ANNOTATED}" tag
+  run --separate-stderr "${CHECK}" "${ROOT}"
+  assert_failure 1
+  [[ "${stderr}" == *'FAIL: widget:'*'both a tag and a branch'* ]]
+}
+
+@test "pins: fails when a branch entry's main is also a tag" {
+  git -C "${REMOTE}" tag main
+  serve_plugin_json "${SHA_ANNOTATED}" upstream-widget 1.0.0
+  write_manifest main "${SHA_ANNOTATED}" branch
+  run --separate-stderr "${CHECK}" "${ROOT}"
+  assert_failure 1
+  [[ "${stderr}" == *'FAIL: widget:'*'both a tag and a branch'* ]]
 }
 
 @test "pins: fails when an entry has no map row" {
@@ -376,4 +382,12 @@ JSON
   assert_success
   run find "${tmp}" -mindepth 1
   assert_output ''
+}
+
+@test "pins: fails when a branch entry tracks a branch other than main" {
+  serve_plugin_json "${SHA_SIDE}" upstream-widget 1.0.0
+  write_manifest other "${SHA_SIDE}" branch
+  run --separate-stderr "${CHECK}" "${ROOT}"
+  assert_failure 1
+  [[ "${stderr}" == *'FAIL: widget:'*'main'*'other'* ]]
 }
