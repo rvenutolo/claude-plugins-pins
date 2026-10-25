@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+
+# @description Verify the README's plugin table lists exactly the manifest's
+#              entries, in manifest order. The table sits between the
+#              `<!-- plugins:start -->` and `<!-- plugins:end -->` markers under
+#              the header `| Plugin | Version | Description |`, and each row is
+#              `| [<name>](https://github.com/<repo>) | <version> | <description> |`
+#              with single-space cells, so a version of a different length
+#              changes no other cell. A `|` in a description is written `\|`.
+#
+#              <version> is the entry's `ref` when .ci/upstream-plugins.json
+#              gives it track `tag`, and its full 40-hex `sha` when the track is
+#              `branch`: a branch name says nothing about what is pinned, and
+#              Renovate rewrites a digest only at full length.
+# @arg $1 root optional repository root holding README.md,
+#         .claude-plugin/marketplace.json and .ci/upstream-plugins.json;
+#         defaults to the repository root of the working directory
+# @stderr one FAIL line per mismatched, missing or surplus row, an OK line when
+#         the table matches, the usage line on exit 2; the ERR trap's
+#         `[<script>] ERROR: ...` report when a command fails instead
+# @exitcode 0 the table matches the manifest
+# @exitcode 1 at least one mismatch, missing markers, an entry with no map row,
+#             or an unreadable README, manifest or map
+# @exitcode 2 more than one argument
+# @exitcode * otherwise the failing git status, when the repository root cannot
+#             be resolved
+
+set -Eeuo pipefail
+shopt -s inherit_errexit
+IFS=$'\n\t'
+
+trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+readonly START_MARKER='<!-- plugins:start -->'
+readonly END_MARKER='<!-- plugins:end -->'
+readonly HEADER='| Plugin | Version | Description |'
+readonly SEPARATOR='| --- | --- | --- |'
+
+# @description Print the usage line and exit 2. Exit 2 rather than 1: 1 is the
+#              check's verdict, and "you called it wrong" must stay
+#              distinguishable from it.
+# @noargs
+# @stderr the usage line
+# @exitcode 2 always
+function usage() {
+  printf 'usage: %s [root]\n' "${0##*/}" >&2
+  trap - ERR
+  exit 2
+}
+
+# @description Print one FAIL line.
+# @arg $1 subject the plugin name, or `README.md` for a structural problem
+# @arg $2 message what is wrong
+# @stderr the FAIL line
+function fail() {
+  printf 'FAIL: %s: %s\n' "$1" "$2" >&2
+}
+
+# @description Leave the verdict of a check that found a problem: drop the ERR
+#              trap so the diagnostics above are the last thing the reader sees.
+# @noargs
+# @exitcode 1 always
+function verdict_failed() {
+  trap - ERR
+  return 1
+}
+
+function main() {
+  if (($# > 1)); then
+    usage
+  fi
+  local root
+  root="${1:-$(git rev-parse --show-toplevel)}"
+  local -r manifest="${root}/.claude-plugin/marketplace.json"
+  local -r readme="${root}/README.md"
+  local -r map="${root}/.ci/upstream-plugins.json"
+
+  if ! jq --exit-status '.plugins | type == "array"' "${manifest}" &> /dev/null; then
+    fail 'marketplace.json' "cannot read a plugins array from ${manifest}"
+    verdict_failed || return 1
+  fi
+  if ! jq --exit-status 'type == "object"' "${map}" &> /dev/null; then
+    fail 'upstream-plugins.json' "cannot read a JSON object from ${map}"
+    verdict_failed || return 1
+  fi
+  local -a names=() expected=() found=() unmapped=()
+  mapfile -t names < <(jq --raw-output '.plugins[].name' "${manifest}")
+  mapfile -t unmapped < <(jq --raw-output --slurpfile map "${map}" \
+    '.plugins[].name | select((($map[0][.] | objects | .track | strings) // "") as $t | $t != "tag" and $t != "branch")' \
+    "${manifest}")
+  if ((${#unmapped[@]} > 0)); then
+    local name
+    for name in "${unmapped[@]}"; do
+      fail "${name}" 'needs a row in .ci/upstream-plugins.json with track tag or branch'
+    done
+    verdict_failed || return 1
+  fi
+  mapfile -t expected < <(jq --raw-output --slurpfile map "${map}" '.plugins[]
+    | (if $map[0][.name].track == "branch" then .source.sha else .source.ref end) as $version
+    | "| [\(.name)](https://github.com/\(.source.repo)) | \($version) | \(.description | gsub("\\|"; "\\|")) |"' \
+    "${manifest}")
+  if [[ ! -r "${readme}" ]]; then
+    fail 'README.md' "cannot read ${readme}"
+    verdict_failed || return 1
+  fi
+
+  local line in_table=0 seen_start=0 seen_end=0 seen_header=0 seen_separator=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" == "${START_MARKER}" ]]; then
+      in_table=1
+      seen_start=1
+    elif [[ "${line}" == "${END_MARKER}" ]]; then
+      if ((in_table == 1)); then
+        seen_end=1
+      fi
+      in_table=0
+    elif ((in_table == 1)); then
+      if [[ "${line}" == "${HEADER}" ]]; then
+        seen_header=1
+      elif [[ "${line}" == "${SEPARATOR}" ]]; then
+        seen_separator=1
+      elif [[ "${line}" == '|'* ]]; then
+        found+=("${line}")
+      fi
+    fi
+  done < "${readme}"
+
+  if ((seen_start == 0 || seen_end == 0)); then
+    fail 'README.md' "needs the markers ${START_MARKER} and ${END_MARKER}, in that order"
+    verdict_failed || return 1
+  fi
+
+  local rc=0 index
+  if ((seen_header == 0 || seen_separator == 0)); then
+    fail 'README.md' "table needs the header '${HEADER}' and the separator '${SEPARATOR}'"
+    rc=1
+  fi
+  local -i total=${#expected[@]}
+  if ((${#found[@]} > total)); then
+    total=${#found[@]}
+  fi
+  for ((index = 0; index < total; index++)); do
+    if ((index >= ${#expected[@]})); then
+      fail 'README.md' "unexpected row with no manifest entry: ${found[index]}"
+      rc=1
+    elif ((index >= ${#found[@]})); then
+      fail "${names[index]}" "no row in the README table; expected: ${expected[index]}"
+      rc=1
+    elif [[ "${found[index]}" != "${expected[index]}" ]]; then
+      fail "${names[index]}" "row differs; expected: ${expected[index]} found: ${found[index]}"
+      rc=1
+    fi
+  done
+
+  if ((rc == 0)); then
+    printf 'OK: README table matches %d manifest entries\n' "${#expected[@]}" >&2
+  fi
+  trap - ERR
+  return "${rc}"
+}
+
+main "$@"
