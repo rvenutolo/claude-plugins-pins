@@ -1,0 +1,10 @@
+{
+  "forrestchang--andrej-karpathy-skills": {
+    "plugin": "andrej-karpathy-skills",
+    "track": "branch"
+  },
+  "jarrodwatts--hud": {
+    "plugin": "claude-hud",
+    "track": "tag"
+  }
+}

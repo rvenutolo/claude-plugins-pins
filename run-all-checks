@@ -34,8 +34,8 @@ readonly REPO_DIR
 # check-executable-bit and check-shell-shebangs hold every tracked file's mode
 # and shebang to what the lint gate assumes. check-uses-sha-pinned requires
 # every workflow `uses:` to be a commit SHA with a version comment. check-pins
-# verifies each catalogue entry's pin against its remote tag and plugin.json,
-# and so needs network access. check-readme-sync holds the README plugin table
+# verifies each catalogue entry's pin against its upstream tag or branch and
+# plugin.json, and so needs network access. check-readme-sync holds the README plugin table
 # to the manifest. check-manifest-invariants holds the manifest to the
 # community marketplace's invariants. .ci/run-plugin-validate is not listed: it
 # needs the ambient `claude` CLI, which the hermetic gate cannot assume.
