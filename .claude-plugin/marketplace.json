@@ -31,8 +31,8 @@
       "source": {
         "source": "github",
         "repo": "jarrodwatts/claude-hud",
-        "ref": "v0.11.3",
-        "sha": "5621429b84ea2503185221244c43a06797bfd05e"
+        "ref": "v0.13.1",
+        "sha": "35597714f9952d6e2fc59c6daa7a388481084f72"
       },
       "description": "Real-time statusline showing context usage, active tools, running agents, and todo progress.",
       "category": "monitoring",
