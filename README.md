@@ -34,7 +34,7 @@ Anthropic's own plugins.
 | Plugin | Version | Description |
 | --- | --- | --- |
 | [forrestchang--andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) | 2c606141936f1eeef17fa3043a72095b4765b9c2 | Behavioral guidelines to reduce common LLM coding mistakes, derived from Andrej Karpathy's observations on LLM coding pitfalls. |
-| [jarrodwatts--hud](https://github.com/jarrodwatts/claude-hud) | v0.11.3 | Real-time statusline showing context usage, active tools, running agents, and todo progress. |
+| [jarrodwatts--hud](https://github.com/jarrodwatts/claude-hud) | v0.13.1 | Real-time statusline showing context usage, active tools, running agents, and todo progress. |
 
 <!-- plugins:end -->
 
