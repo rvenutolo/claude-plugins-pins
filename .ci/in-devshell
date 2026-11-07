@@ -211,31 +211,28 @@ function main() {
     exec nix "${nix_args[@]}" "$@"
   ) <&0 &
   child_pid="$!"
-  # A trapped signal cuts `wait` short, but it can also land between the loop
-  # top and the start of `wait`: the trap then runs first and `wait` blocks and
-  # returns the child's real status. So a run of the trap alone decides
-  # nothing; whether the child still answers `kill -0` does. While it does,
-  # `wait` was cut short and is repeated. Once it does not, rc is the child's
-  # own status, so a command that handles the signal and exits 0 is reported
-  # as 0, unless bash lost it: that happens only when the child ended during
-  # the very wait a trap cut short, and the next wait then finds no such child
-  # (5.2 reports 255, 5.3 reports 127, with a message silenced here). Then the
-  # conventional 128+N of the last signal stands in, so a real 127 or 255
-  # after a forwarded signal is reported as 128+N too.
+  # A trapped signal can land just before `wait` starts, so `wait` then returns
+  # the child's real status, and the child can exit between a `wait` the trap
+  # cut short and any liveness check, so neither the trap having run nor
+  # `kill -0` tells whether rc is the child's. After every wait a trap ran
+  # during, the loop therefore simply waits again: a wait on a child already
+  # reaped returns its saved status, so a command that handles the signal and
+  # exits 0 is reported as 0. Bash loses the status only when the child ended
+  # during the very wait a trap cut short, and the next wait then finds no
+  # such child (5.2 reports 255, 5.3 reports 127, with a message silenced
+  # here). Then the conventional 128+N of the last signal stands in, so a real
+  # 127 or 255 after a forwarded signal is reported as 128+N too.
   local rc=0
   local signal_status=''
   while true; do
     got_signal=''
     rc=0
     wait "${child_pid}" 2> '/dev/null' || rc="$?"
-    if [[ -z "${got_signal}" ]]; then
-      break
-    fi
-    signal_status="${got_signal}"
-    if kill -0 "${child_pid}" 2> '/dev/null'; then
+    if [[ -n "${got_signal}" ]]; then
+      signal_status="${got_signal}"
       continue
     fi
-    if ((rc == 127 || rc == 255)); then
+    if [[ -n "${signal_status}" ]] && ((rc == 127 || rc == 255)); then
       rc="${signal_status}"
     fi
     break
