@@ -1,10 +1,10 @@
 # .githooks/commit-msg, run against the real .commitlintrc.yml: which commit
 # messages the hook lets through and which it rejects.
 #
-# The hook reaches commitlint through .ci/in-devshell, which runs it directly
-# when IN_DEVSHELL is set, so these cases need the suite run inside the
-# devShell, as run-tests already says. commitlint reads its config from the
-# working directory, so every case runs from the repo root.
+# The hook re-runs itself through .ci/in-devshell only when IN_DEVSHELL is
+# unset; the suite runs inside the devShell, so here it calls commitlint
+# directly. commitlint reads its config from the working directory, so every
+# case runs from the repo root.
 #
 # setup sets HOOK, the hook under test, and MSG_FILE, the message file a case
 # writes and hands to it.

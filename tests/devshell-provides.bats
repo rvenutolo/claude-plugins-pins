@@ -308,3 +308,19 @@ function use_fixture_path() {
   assert_failure 2
   assert_output --partial 'usage:'
 }
+
+@test "devshell provides: fixture mode runs where it is started, without entering the devShell" {
+  # Real mode re-runs itself through .ci/in-devshell when IN_DEVSHELL is unset;
+  # fixture mode grades the PATH it is handed and must not. A stub nix first on
+  # PATH records any attempt to enter the devShell in a marker file and fails.
+  local -r root="${BATS_TEST_TMPDIR}/ok"
+  make_devshell_fixture "${root}"
+  use_fixture_path "${root}"
+  mkdir -- "${BATS_TEST_TMPDIR}/stub"
+  printf '#!/bin/sh\n: > "%s/nix-called"\nexit 9\n' "${BATS_TEST_TMPDIR}" \
+    > "${BATS_TEST_TMPDIR}/stub/nix"
+  chmod +x -- "${BATS_TEST_TMPDIR}/stub/nix"
+  run env --unset=IN_DEVSHELL PATH="${BATS_TEST_TMPDIR}/stub:${PATH}" "${CHECK}" "${root}"
+  assert_success
+  assert [ ! -e "${BATS_TEST_TMPDIR}/nix-called" ]
+}

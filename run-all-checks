@@ -6,6 +6,10 @@
 #              separate step run before it. Exit codes are AGGREGATED rather
 #              than failing fast, so a single run surfaces every failing
 #              category instead of only the first.
+#
+#              With IN_DEVSHELL unset, as in an interactive `nix develop` or
+#              direnv shell, the script re-runs itself through .ci/in-devshell,
+#              so no check resolves a tool from the host PATH.
 # @noargs
 # @exitcode 0 every check passed
 # @exitcode 1 one or more checks failed
@@ -22,6 +26,17 @@ shopt -s inherit_errexit
 IFS=$'\n\t'
 
 trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+# An interactive `nix develop` or direnv shell leaves IN_DEVSHELL unset and the
+# host PATH behind the flake's tools: a tool the flake lacks would resolve from
+# the host. Re-run through in-devshell, which sets IN_DEVSHELL and so stops the
+# recursion. Outside the devShell nothing but bash, git, GNU coreutils and nix
+# is assumed.
+if [[ -z "${IN_DEVSHELL:-}" ]]; then
+  SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
+  SELF_DIR="${SELF_PATH%/*}"
+  exec "${SELF_DIR}/.ci/in-devshell" "${SELF_PATH}" "$@"
+fi
 
 REPO_DIR="$(git rev-parse --show-toplevel)"
 readonly REPO_DIR

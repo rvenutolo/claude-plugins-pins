@@ -15,6 +15,7 @@ readonly -a FIXTURE_EXECUTABLE=(
   '.ci/in-devshell'
   '.ci/check-thing'
   '.ci/run-thing'
+  '.ci/testdata/self-wrap-probe'
   '.githooks/pre-commit'
   'run-all-checks'
   'run-tests'
