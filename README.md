@@ -107,6 +107,10 @@ a branch. The shortcut for the whole gate is `just check`.
 Every gate script and git hook enters the Nix devShell itself: run from any
 shell, including an interactive `nix develop` or direnv one, it re-runs
 through `.ci/in-devshell`, so no check resolves a tool from the host `PATH`.
+Three scripts stay on the host: `.ci/in-devshell` itself,
+`.ci/activate-githooks`, which the devShell's shellHook runs while the shell
+starts, and `.ci/run-plugin-validate`, which needs the `claude` CLI from the
+host `PATH`.
 `.ci/in-devshell` is for commands that are not scripts, such as
 `.ci/in-devshell bats tests/pins.bats`. Outside the devShell the scripts need
 bash 4.4+, git, GNU coreutils and nix.

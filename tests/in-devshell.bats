@@ -156,7 +156,7 @@ function wrap() {
     run wrap "${value}" true
     assert_failure 1
     assert_equal "${#lines[@]}" 1
-    assert_output --partial "TMPDIR ${value} does not exist"
+    assert_output --partial "TMPDIR ${value} names no directory"
     assert [ ! -e "${value}" ]
   done
   assert_empty_dir "${SCRATCH}"

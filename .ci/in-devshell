@@ -70,9 +70,9 @@ set -Eeuo pipefail
 # which tells a coworker running `just check` nothing about what to install.
 # Check first, and say what to do. Must stay ABOVE the `shopt` line it is
 # protecting. The GNU long options of readlink, mktemp and rm used below are a
-# host requirement too; on macOS that is GNU coreutils.
+# host requirement too, stated in the header; on macOS that is GNU coreutils.
 if ((BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4))); then
-  printf '%s: bash 4.4+ and GNU coreutils required to run the gate (found bash %s.%s). On macOS: brew install bash coreutils, with the coreutils gnubin directory first on PATH.\n' \
+  printf '%s: bash 4.4+ required to run the gate (found %s.%s). On macOS: brew install bash.\n' \
     "${0##*/}" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" >&2
   exit 1
 fi
@@ -186,17 +186,20 @@ function main() {
 
   local -r parent_dir="${TMPDIR:-/tmp}"
   if [[ ! -d "${parent_dir}" ]]; then
-    printf '%s: TMPDIR %s does not exist\n' "${0##*/}" "${parent_dir}" >&2
+    printf '%s: TMPDIR %s names no directory\n' "${0##*/}" "${parent_dir}" >&2
     exit 1
   fi
   trap remove_tmp_dir EXIT
-  trap 'on_signal HUP 129' HUP
-  trap 'on_signal INT 130' INT
-  trap 'on_signal TERM 143' TERM
   # Absolute, because nix rejects a relative TMPDIR and the command could not
   # use one after changing directory.
   tmp_dir="$(mktemp --directory --tmpdir="$(readlink --canonicalize -- "${parent_dir}")" in-devshell.XXXXXX)"
   export TMPDIR="${tmp_dir}"
+  # Set only once tmp_dir is assigned, so on_signal never exits while mktemp's
+  # directory exists but tmp_dir, which the EXIT trap reads, is still empty.
+  # Before this point a signal takes its default action.
+  trap 'on_signal HUP 129' HUP
+  trap 'on_signal INT 130' INT
+  trap 'on_signal TERM 143' TERM
 
   # Run in the background only so `wait` can be interrupted by the traps above;
   # a foreground child would hold them off until it exited. Without job control
@@ -208,27 +211,31 @@ function main() {
     exec nix "${nix_args[@]}" "$@"
   ) <&0 &
   child_pid="$!"
-  # A trapped signal cuts `wait` short, so wait again until one returns without
-  # a trap having run. A child that ended meanwhile usually still has its
-  # status saved, and that wait returns it: a command that handles the signal
-  # and exits 0 is reported as 0. Only when the child ends during the very wait
-  # a trap cut short does bash reap it and lose the status: the next wait finds
-  # no such child (5.2 reports 255, 5.3 reports 127, with a message silenced
-  # here) and the pid does not answer `kill -0`. Then the conventional 128+N
-  # of the last signal stands in, so a real 127 or 255 after a forwarded
-  # signal is reported as 128+N too.
+  # A trapped signal cuts `wait` short, but it can also land between the loop
+  # top and the start of `wait`: the trap then runs first and `wait` blocks and
+  # returns the child's real status. So a run of the trap alone decides
+  # nothing; whether the child still answers `kill -0` does. While it does,
+  # `wait` was cut short and is repeated. Once it does not, rc is the child's
+  # own status, so a command that handles the signal and exits 0 is reported
+  # as 0, unless bash lost it: that happens only when the child ended during
+  # the very wait a trap cut short, and the next wait then finds no such child
+  # (5.2 reports 255, 5.3 reports 127, with a message silenced here). Then the
+  # conventional 128+N of the last signal stands in, so a real 127 or 255
+  # after a forwarded signal is reported as 128+N too.
   local rc=0
   local signal_status=''
   while true; do
     got_signal=''
     rc=0
     wait "${child_pid}" 2> '/dev/null' || rc="$?"
-    if [[ -n "${got_signal}" ]]; then
-      signal_status="${got_signal}"
+    if [[ -z "${got_signal}" ]]; then
+      break
+    fi
+    signal_status="${got_signal}"
+    if kill -0 "${child_pid}" 2> '/dev/null'; then
       continue
     fi
-    if [[ -n "${signal_status}" ]] && ((rc == 127 || rc == 255)) \
-      && ! kill -0 "${child_pid}" 2> '/dev/null'; then
+    if ((rc == 127 || rc == 255)); then
       rc="${signal_status}"
     fi
     break
