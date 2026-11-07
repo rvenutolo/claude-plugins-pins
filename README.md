@@ -103,3 +103,10 @@ access, and `.ci/check-readme-sync`, which holds the plugin table to the
 manifest. Both read [`.ci/upstream-plugins.json`](.ci/upstream-plugins.json),
 which gives each entry its upstream plugin name and whether it tracks a tag or
 a branch. The shortcut for the whole gate is `just check`.
+
+Every gate script and git hook enters the Nix devShell itself: run from any
+shell, including an interactive `nix develop` or direnv one, it re-runs
+through `.ci/in-devshell`, so no check resolves a tool from the host `PATH`.
+`.ci/in-devshell` is for commands that are not scripts, such as
+`.ci/in-devshell bats tests/pins.bats`. Outside the devShell the scripts need
+bash 4.4+, git, GNU coreutils and nix.

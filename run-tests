@@ -9,6 +9,12 @@
 #              Plain `bats`, one process over every file: no pool, no slicing.
 #              Naming no argument runs every tests/*.bats and adds
 #              `--print-output-on-failure`.
+#
+#              With IN_DEVSHELL unset, as in an interactive `nix develop` or
+#              direnv shell, the script re-runs itself through .ci/in-devshell,
+#              so bats and every tool a test calls come from the flake. That
+#              devShell is entered with --ignore-environment, so a direct run
+#              keeps only the KEEP_VARS environment (see .ci/in-devshell).
 # @arg $@ files optional .bats files to run; any other argument is passed to
 #         bats as given
 # @stderr a `[<script>] <message>` banner or `FATAL` line, bats' own output
@@ -35,6 +41,17 @@ shopt -s inherit_errexit
 IFS=$'\n\t'
 
 trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "${BASH_COMMAND}" >&2' ERR
+
+# An interactive `nix develop` or direnv shell leaves IN_DEVSHELL unset and the
+# host PATH behind the flake's tools: a tool the flake lacks would resolve from
+# the host. Re-run through in-devshell, which sets IN_DEVSHELL and so stops the
+# recursion. Outside the devShell nothing but bash, git, GNU coreutils and nix
+# is assumed.
+if [[ -z "${IN_DEVSHELL:-}" ]]; then
+  SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
+  SELF_DIR="${SELF_PATH%/*}"
+  exec "${SELF_DIR}/.ci/in-devshell" "${SELF_PATH}" "$@"
+fi
 
 REPO_DIR="$(git rev-parse --show-toplevel)"
 readonly REPO_DIR
@@ -70,7 +87,7 @@ function main() {
   unset BASH_ENV
 
   if ! command -v bats > /dev/null 2>&1; then
-    die "bats not found on PATH — run './.ci/in-devshell ./run-tests' or 'just test'"
+    die "bats not found on PATH, though IN_DEVSHELL is set; the devShell provides it, so run from a shell where IN_DEVSHELL is unset and the script enters the devShell itself"
   fi
 
   if (($# == 0)); then
