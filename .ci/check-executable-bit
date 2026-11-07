@@ -57,6 +57,7 @@ readonly EXPECT_EXECUTABLE=(
   '.ci/in-devshell'
   '.ci/check-*'
   '.ci/run-*'
+  '.ci/testdata/self-wrap-probe'
   '.githooks/*'
   'run-all-checks'
   'run-tests'
