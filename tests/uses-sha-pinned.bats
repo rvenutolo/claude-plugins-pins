@@ -30,15 +30,18 @@ function track() {
 }
 
 # @description Run the gate from inside the fixture. The gate takes no
-#              arguments and finds its repo with `git rev-parse
-#              --show-toplevel`, so the cd is the fixture selection.
+#              arguments and takes its repo root from its own path, so a copy
+#              at the same depth in the fixture, `.ci/check-uses-sha-pinned`,
+#              is the fixture selection.
 # @noargs
 function gate_in_fixture() {
-  (cd "${FIXTURE}" && "${CHECK}")
+  mkdir --parents "${FIXTURE}/.ci"
+  cp -- "${CHECK}" "${FIXTURE}/.ci/check-uses-sha-pinned"
+  (cd "${FIXTURE}" && "${FIXTURE}/.ci/check-uses-sha-pinned")
 }
 
-# @description Run the gate from inside the real repo, which is where the
-#              argument-less gate looks for its tracked files.
+# @description Run the gate from inside the real repo, whose tracked files the
+#              argument-less gate grades.
 # @noargs
 function real_repo_gate() {
   (cd "${REPO_DIR}" && "${CHECK}")

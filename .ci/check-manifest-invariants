@@ -38,7 +38,7 @@
 #              cannot be done portably in shell: a contributor may run the gate
 #              on macOS, where `grep -P` is not guaranteed.
 # @arg $1 root optional repository root holding .claude-plugin/marketplace.json;
-#         defaults to the repository root of the working directory
+#         defaults to the repository root of the script's own path
 # @stderr one `FAIL: <message>` line per violated invariant or unreadable
 #         manifest, an `OK:` line when every invariant holds, the usage line on
 #         exit 2; the ERR trap's `[<script>] ERROR: ...` report when a command
@@ -46,8 +46,7 @@
 # @exitcode 0 every invariant holds
 # @exitcode 1 at least one violation, or an unreadable or unparsable manifest
 # @exitcode 2 more than one argument
-# @exitcode * otherwise the failing git status, when the repository root cannot
-#             be resolved
+# @exitcode * otherwise the failing git status
 
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -60,10 +59,10 @@ trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "
 # the host. Re-run through in-devshell, which sets IN_DEVSHELL and so stops the
 # recursion. Outside the devShell nothing but bash, git, GNU coreutils and nix
 # is assumed.
+SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
+SELF_REPO="${SELF_PATH%/*/*}"
 if [[ -z "${IN_DEVSHELL:-}" ]]; then
-  SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
-  SELF_DIR="${SELF_PATH%/*}"
-  exec "${SELF_DIR}/in-devshell" "${SELF_PATH}" "$@"
+  exec "${SELF_REPO}/.ci/in-devshell" "${SELF_PATH}" "$@"
 fi
 
 readonly SCHEMA_URL='https://json.schemastore.org/claude-code-marketplace.json'
@@ -188,7 +187,7 @@ function main() {
     usage
   fi
   local root
-  root="${1:-$(git rev-parse --show-toplevel)}"
+  root="${1:-${SELF_REPO}}"
   local -r manifest="${root}/.claude-plugin/marketplace.json"
 
   if [[ ! -f "${manifest}" ]]; then
