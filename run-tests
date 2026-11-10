@@ -23,8 +23,7 @@
 # @exitcode 0 all tests passed and the repo was left untouched
 # @exitcode 1 bats missing, the suite mutated the repo, or the host bash is
 #             older than 4.4
-# @exitcode * otherwise the failing git status when the repository root cannot
-#             be resolved, or the status bats exited with
+# @exitcode * otherwise the failing git status, or the status bats exited with
 
 set -Eeuo pipefail
 # `inherit_errexit` is a bash 4.4 builtin option: on stock macOS bash 3.2, and
@@ -47,13 +46,13 @@ trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "
 # the host. Re-run through in-devshell, which sets IN_DEVSHELL and so stops the
 # recursion. Outside the devShell nothing but bash, git, GNU coreutils and nix
 # is assumed.
+SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
+SELF_REPO="${SELF_PATH%/*}"
 if [[ -z "${IN_DEVSHELL:-}" ]]; then
-  SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
-  SELF_DIR="${SELF_PATH%/*}"
-  exec "${SELF_DIR}/.ci/in-devshell" "${SELF_PATH}" "$@"
+  exec "${SELF_REPO}/.ci/in-devshell" "${SELF_PATH}" "$@"
 fi
 
-REPO_DIR="$(git rev-parse --show-toplevel)"
+REPO_DIR="${SELF_REPO}"
 readonly REPO_DIR
 
 # @description Print one fatal diagnostic to stderr and exit 1.

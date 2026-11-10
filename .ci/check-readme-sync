@@ -15,7 +15,7 @@
 #              `currentDigest`, which it replaces with the full new digest.
 # @arg $1 root optional repository root holding README.md,
 #         .claude-plugin/marketplace.json and .ci/upstream-plugins.json;
-#         defaults to the repository root of the working directory
+#         defaults to the repository root of the script's own path
 # @stderr one FAIL line per mismatched, missing or surplus row, an OK line when
 #         the table matches, the usage line on exit 2; the ERR trap's
 #         `[<script>] ERROR: ...` report when a command fails instead
@@ -23,8 +23,7 @@
 # @exitcode 1 at least one mismatch, missing markers, an entry with no map row,
 #             or an unreadable README, manifest or map
 # @exitcode 2 more than one argument
-# @exitcode * otherwise the failing git status, when the repository root cannot
-#             be resolved
+# @exitcode * otherwise the failing git status
 
 set -Eeuo pipefail
 shopt -s inherit_errexit
@@ -37,10 +36,10 @@ trap 'printf "[%s] ERROR: line %s (exit %s): %s\n" "${0##*/}" "${LINENO}" "$?" "
 # the host. Re-run through in-devshell, which sets IN_DEVSHELL and so stops the
 # recursion. Outside the devShell nothing but bash, git, GNU coreutils and nix
 # is assumed.
+SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
+SELF_REPO="${SELF_PATH%/*/*}"
 if [[ -z "${IN_DEVSHELL:-}" ]]; then
-  SELF_PATH="$(readlink --canonicalize -- "${BASH_SOURCE[0]}")"
-  SELF_DIR="${SELF_PATH%/*}"
-  exec "${SELF_DIR}/in-devshell" "${SELF_PATH}" "$@"
+  exec "${SELF_REPO}/.ci/in-devshell" "${SELF_PATH}" "$@"
 fi
 
 readonly START_MARKER='<!-- plugins:start -->'
@@ -82,7 +81,7 @@ function main() {
     usage
   fi
   local root
-  root="${1:-$(git rev-parse --show-toplevel)}"
+  root="${1:-${SELF_REPO}}"
   local -r manifest="${root}/.claude-plugin/marketplace.json"
   local -r readme="${root}/README.md"
   local -r map="${root}/.ci/upstream-plugins.json"

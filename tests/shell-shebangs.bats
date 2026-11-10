@@ -37,10 +37,9 @@ function make_shebang_fixture() {
 # tracked sources actually have cannot hide behind a green suite.
 
 @test "shell shebangs: the real repo passes" {
-  # REPO_DIR explicitly rather than relying on the argument-less default: the
-  # default resolves through `git rev-parse --show-toplevel`, and a bats test
-  # must not depend on the directory the suite happened to be launched from.
-  # Past that one branch the script runs the same either way.
+  # REPO_DIR explicitly rather than the argument-less default, which takes the
+  # script's own repo root. Fixture mode is the branch that takes the directory
+  # given; past it the script runs the same either way.
   run "${CHECK}" "${REPO_DIR}"
   assert_success
   assert_output --partial 'shebangs canonical'
