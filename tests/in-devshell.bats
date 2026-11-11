@@ -164,27 +164,33 @@ function wrap() {
 
 @test "in-devshell: the devShell is the wrapper's own repo, whatever the caller's cwd" {
   # A directory outside any git repository: the wrapper finds its flake from
-  # where it lives, not from where it is called.
-  #
-  # IN_DEVSHELL proves only that some devShell was entered. nativeBuildInputs
-  # names the store path of every package this flake's devShell declares, so it
-  # differs for any devShell built from a different flake.nix or flake.lock: the
-  # case proves the devShell is this flake's, not that it came from this repo's
-  # path. The suite itself runs inside this repo's devShell, whose value is the
-  # expected one.
+  # where it lives, not from where it is called. IN_DEVSHELL proves only that
+  # some devShell was entered. nativeBuildInputs names the store path of every
+  # package the devShell declares, so it proves the devShell is built from this
+  # flake's definition. DEVSHELL_FLAKE_ROOT, the store path of the source the
+  # flake was evaluated from, proves the source is this checkout's content and
+  # not a sibling repo's identical flake. The suite itself runs inside this
+  # repo's devShell, so both expected values are its own.
   local -r expected_inputs="${nativeBuildInputs:-}"
   [[ -n "${expected_inputs}" ]] \
     || fail 'nativeBuildInputs is unset: the suite is not running inside the devShell'
+  local -r expected_root="${DEVSHELL_FLAKE_ROOT:-}"
+  [[ -n "${expected_root}" ]] \
+    || fail 'DEVSHELL_FLAKE_ROOT is unset: the suite is not running inside the devShell'
+  [[ "${expected_root}" == /nix/store/* ]] \
+    || fail "DEVSHELL_FLAKE_ROOT is not a store path: ${expected_root}"
   mkdir -- "${BATS_TEST_TMPDIR}/elsewhere"
   cd "${BATS_TEST_TMPDIR}/elsewhere"
   # shellcheck disable=SC2016 # expanded by the wrapped sh, not here
   run wrap "${SCRATCH}" sh -c '
     printf "IN_DEVSHELL=%s\n" "${IN_DEVSHELL:-}"
     printf "nativeBuildInputs=%s\n" "${nativeBuildInputs:-}"
+    printf "DEVSHELL_FLAKE_ROOT=%s\n" "${DEVSHELL_FLAKE_ROOT:-}"
     exit 4'
   assert_failure 4
   assert_line 'IN_DEVSHELL=1'
   assert_line "nativeBuildInputs=${expected_inputs}"
+  assert_line "DEVSHELL_FLAKE_ROOT=${expected_root}"
   assert_empty_dir "${SCRATCH}"
 }
 
