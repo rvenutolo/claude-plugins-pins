@@ -216,11 +216,15 @@ function assert_in_devshell() {
 @test "self-wrap: every wrapped script takes its repo root from its own path" {
   # The strip count is the script's depth below the root plus one: a root-level
   # script strips one component, `.ci/x` strips two, `.ci/testdata/x` three.
-  local path text strip depth expected failures=''
+  # A `rev-parse --show-toplevel` that is not the repo root carries a
+  # `# cwd-root: <reason>` comment on its line.
+  local path text strip depth expected roots bare failures=''
   while IFS= read -r path; do
     is_exempt "${path}" && continue
     text="$(grep --invert-match '^[[:space:]]*#' -- "${REPO_DIR}/${path}" || true)"
-    if grep --quiet --extended-regexp 'git rev-parse --show-toplevel' <<< "${text}"; then
+    roots="$(grep --fixed-strings 'git rev-parse --show-toplevel' <<< "${text}" || true)" # none: fine
+    bare="$(grep --invert-match --fixed-strings '# cwd-root: ' <<< "${roots}" || true)"   # none left: fine
+    if [[ -n "${bare}" ]]; then
       failures+=" ${path}(cwd root)"
       continue
     fi
@@ -260,4 +264,59 @@ function assert_in_devshell() {
   cd "${scratch}"
   run env IN_DEVSHELL=1 "${scratch}/link"
   assert_success
+}
+
+@test "no wrapped script locates itself from a non-canonical path" {
+  # BASH_SOURCE[0] and $0 name the path the script was started by, which is a
+  # symlink's own location when it is run through one. A path derived from
+  # either must first go through readlink or realpath.
+  local path text failures=''
+  while IFS= read -r path; do
+    is_exempt "${path}" && continue
+    text="$(grep --invert-match '^[[:space:]]*#' -- "${REPO_DIR}/${path}" || true)"
+    # shellcheck disable=SC2016 # the pattern is a regex, not an expansion
+    if grep --extended-regexp 'BASH_SOURCE|\$0([^0-9]|$)|\$\{0(\}|%)|dirname "\$\{?0\}?"' <<< "${text}" \
+      | grep --invert-match --extended-regexp 'readlink --canonicalize|realpath' \
+      | grep --quiet .; then
+      failures+=" ${path}(non-canonical self path)"
+    fi
+  done < <(tracked_scripts)
+  assert_equal "${failures}" ''
+}
+
+# @description Build a scratch repo whose tracked files the gates would reject
+#              or rewrite if they graded it: a shell script with a shellcheck
+#              warning and bad formatting, a Markdown file with a lint
+#              violation and a misspelling. The names match this repo's own.
+# @arg $1 directory the scratch repo to create
+function make_scratch_repo() {
+  local -r dir="$1"
+  mkdir --parents -- "${dir}/.ci"
+  # shellcheck disable=SC2016 # the scratch script's text, not an expansion here
+  printf '#!/usr/bin/env bash\nif true;then echo $1;fi\n' > "${dir}/run-tests"
+  printf '# Title\n\n\n\nteh text\n' > "${dir}/README.md"
+  git -C "${dir}" init --quiet
+  git -C "${dir}" add --all
+}
+
+@test "self-wrap: the lint gate run through a symlink from another repo grades its own repo" {
+  local scratch="${BATS_TEST_TMPDIR}/other-repo"
+  make_scratch_repo "${scratch}"
+  ln --symbolic -- "${REPO_DIR}/.ci/run-lint-checks" "${scratch}/link"
+  cd "${scratch}"
+  run env IN_DEVSHELL=1 "${scratch}/link"
+  assert_success
+}
+
+@test "self-wrap: the fixer gate run through a symlink from another repo leaves that repo untouched" {
+  local scratch="${BATS_TEST_TMPDIR}/other-repo"
+  make_scratch_repo "${scratch}"
+  cp -- "${scratch}/run-tests" "${BATS_TEST_TMPDIR}/run-tests.orig"
+  cp -- "${scratch}/README.md" "${BATS_TEST_TMPDIR}/README.md.orig"
+  ln --symbolic -- "${REPO_DIR}/.ci/run-fixers" "${scratch}/link"
+  cd "${scratch}"
+  run env IN_DEVSHELL=1 "${scratch}/link"
+  assert_success
+  cmp -- "${scratch}/run-tests" "${BATS_TEST_TMPDIR}/run-tests.orig"
+  cmp -- "${scratch}/README.md" "${BATS_TEST_TMPDIR}/README.md.orig"
 }
