@@ -123,7 +123,12 @@
           # Activate the tracked git hooks for this clone. As a manual per-clone
           # step this silently never happens; the devShell is the one place
           # onboarding cannot skip. Tolerant of failure on purpose.
+          #
+          # DEVSHELL_FLAKE_ROOT lets the wrapper's tests prove which flake a
+          # `nix develop` entered: nothing else nix exposes names the source it
+          # evaluated.
           shellHook = ''
+            export DEVSHELL_FLAKE_ROOT=${self}
             if hooks_repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
               "$hooks_repo_root/.ci/activate-githooks" \
                 || echo 'warning: could not activate tracked git hooks' >&2
